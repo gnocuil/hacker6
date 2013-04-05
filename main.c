@@ -16,24 +16,36 @@
 
 int count = 0;
 int len = 1400;
-char local_ipv4_addr_name[100];
 char target_ipv4_addr_name[100];
-char device_name[100];
+//char device_name[100];
 unsigned short dst_port = 6668;
-unsigned short src_port = 6667;
-int mode;
+//unsigned short src_port = 6667;
+int ipv6_fd;
+struct sockaddr_in6 dest;
 
 static void usage()
 {
-	printf("Usage : hacker4 [options] <local_ipv4_addr> <target_ipv4_addr>\n");
+	printf("Usage : hacker6 [options] <target_ipv4_addr>\n");
 	printf("            options:  -n <count>         default value: 0\n");
 	printf("                      -l <packet_len>    default value: 1400\n");
-//	printf("                      -i <interface>     default value: eth0\n");
 }
 
 void init_socket()
 {
-
+    if ((ipv6_fd = socket(AF_INET6, SOCK_DGRAM, 0)) < 0) {
+        fprintf(stderr, "Failed to create sockfd!\n");
+        exit(1);
+    }
+    
+    memset(&dest, 0, sizeof(dest));
+    dest.sin6_family = AF_INET6;
+    dest.sin6_port = htons(dst_port);
+    char addr[200] = {0};
+    sprintf(addr, "2001:da8:200:900e:0:5efe:%s", target_ipv4_addr_name);
+	if (inet_pton(AF_INET6, addr, &dest.sin6_addr) < 0) {
+		fprintf(stderr, "Failed to resolve server_addr : %s\n", addr);
+		exit(1);
+	}
 }
 
 static uint16_t udpchecksum(char *iphead, char *udphead, int udplen, int type)
@@ -109,58 +121,12 @@ static uint16_t checksum(uint16_t *addr, int len)
     return (answer);
 }
 
-void send_packet4(char* packet, int len)
+void send_packet6(char* packet, int len)
 {
-    char buf[2000] = {0};
-	memcpy(buf + 20 + 8, packet, len);
-	struct udphdr *udp = (struct udphdr*)(buf + 20);
-	udp->source = htons(src_port);
-	udp->dest = htons(dst_port);
-	udp->len = htons(len + 8);
-	udp->check = 0;
-	
-	struct iphdr* ip = (struct iphdr*)(buf);
-	ip->version = 4;
-	ip->ihl = 5;
-	ip->tos = 0x10;
-	ip->tot_len = htons(len + 20 + 8);
-	ip->id = 0;
-	ip->frag_off = 0;
-	ip->ttl = 128;
-	ip->protocol = UDP;
-	ip->check = 0;
-	inet_aton(local_ipv4_addr_name, &(ip->saddr));
-	inet_aton(target_ipv4_addr_name, &(ip->daddr));
-	
-	udp->check = htons(udpchecksum((char*)ip, (char*)udp, len + 8, 4));
-	ip->check = checksum((uint16_t*)ip, 20);
-	
-	int total_len = len + 20 + 8;
-	
-	int fd = socket(PF_INET, SOCK_RAW, IPPROTO_RAW);
-	if (fd < 0) {
-		fprintf(stderr, "Failed to create send socket.\n");
-		exit(1);
-	}
-	
-	/*
-	struct sockaddr_ll device;
-	if ((device.sll_ifindex = if_nametoindex(device_name)) == 0) {
-		fprintf(stderr, "Failed to resolve the index of %s.\n", device_name);
-		exit(1);
-	}
-	*/
-	
-	struct sockaddr_in addr;
-	addr.sin_family = AF_INET;
-	addr.sin_port = htons(dst_port);
-	inet_aton(target_ipv4_addr_name, &(addr.sin_addr));
-	
-	if (sendto(fd, buf, total_len, 0, (struct sockaddr *)&addr, sizeof(addr)) < 0) {
-		fprintf(stderr, "Failed to send ipv4 packet. err %d\n", errno);
-		exit(1);
-	}
-	close(fd);
+    if (sendto(ipv6_fd, packet, len, 0, (struct sockaddr *)&dest, sizeof(struct sockaddr_in6)) < 0) {
+    	fprintf(stderr, "Failed to send!\n");
+    	exit(1);
+    }
 }
 
 void sendpacket()
@@ -169,13 +135,12 @@ void sendpacket()
     int i;
     for (i = 0; i < len; ++i)
         buf[i] = rand() & 0xFF;
-    send_packet4(buf, len);
+    send_packet6(buf, len);
 }
 
 int main(int argc, char **argv)
 {
-    strcpy(device_name, "eth0");
-    mode = 4;
+//    strcpy(device_name, "eth0");
 	int i;
 	for (i = 1; i < argc; ++i) {
 		if (i + 1 < argc && strcmp(argv[i], "-n") == 0) {
@@ -184,19 +149,18 @@ int main(int argc, char **argv)
         } else if (i + 1 < argc && strcmp(argv[i], "-l") == 0) {
 			++i;
 			sscanf(argv[i], "%d", &len);
-	    } else if (i + 1 < argc && strcmp(argv[i], "-i") == 0) {
+/*	    } else if (i + 1 < argc && strcmp(argv[i], "-i") == 0) {
 			++i;
-			strcpy(device_name, argv[i]);
-	    } else if (i + 1 < argc) {
-	        strcpy(local_ipv4_addr_name, argv[i++]);
+			strcpy(device_name, argv[i]);*/
+	    } else if (i < argc) {
 	        strcpy(target_ipv4_addr_name, argv[i]);
-	        printf("local ipv4 addr : %s  target ipv4 addr : %s\n", local_ipv4_addr_name, target_ipv4_addr_name);
+	        printf("target ipv4 addr : %s\n", target_ipv4_addr_name);
 		} else {//config-interface
 			usage();
 			return 0;
 		}
 	}
-	if (strlen(local_ipv4_addr_name) == 0 || strlen(target_ipv4_addr_name) == 0) {
+	if (strlen(target_ipv4_addr_name) == 0) {
 	    usage();
 	    return 0;
 	}

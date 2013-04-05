@@ -1,6 +1,6 @@
 CC     := gcc
 CFLAGS := 
-TARGET := hacker
+TARGET := hacker6
 OBJS   := main.o
 
 all: $(TARGET)
