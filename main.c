@@ -20,19 +20,21 @@ int len = 1400;
 char local_ipv6_addr_name[100];
 char target_ipv4_addr_name[100];
 char target_ipv6_addr_name[100];
-//char device_name[100];
+char device_name[100];
 unsigned short dst_port = 68;
 unsigned short src_port = 67;
 //int ipv6_fd;
 int s_send6;
 struct sockaddr_in6 dest;
 struct sockaddr_in6 remote_addr6;
+struct sockaddr_ll device;
 
 static void usage()
 {
 	printf("Usage : hacker6 [options] <local_ipv6_addr> <target_ipv4_addr>\n");
 	printf("			options:  -n <count>		 default value: 0\n");
-	printf("					  -l <packet_len>	default value: 1400\n");
+	printf("					  -l <packet_len>	 default value: 1400\n");
+	printf("					  -i <device_name>	 default value: eth1\n");
 }
 
 void init_socket()
@@ -53,7 +55,7 @@ void init_socket()
 		exit(1);
 	}
 */
-	s_send6 = socket(PF_INET6, SOCK_RAW, IPPROTO_RAW);
+	s_send6 = socket(PF_PACKET, SOCK_RAW, IPPROTO_RAW);
 	if (s_send6 < 0)
 	{
 		printf("[4over6 CRA]: Failed to create send socket.\n");
@@ -139,24 +141,30 @@ static uint16_t checksum(uint16_t *addr, int len)
 
 void send_packet6(char* packet, int len)
 {
-	struct ip6_hdr *ip6hdr = (struct ip6_hdr *)packet;
+	struct ip6_hdr *ip6hdr = (struct ip6_hdr *)(packet + 14);
 	ip6hdr->ip6_flow = htonl((6 << 28) | (0 << 20) | 0);		
-	ip6hdr->ip6_plen = htons(len - 40);
+	ip6hdr->ip6_plen = htons(len - 14 - 40);
 	ip6hdr->ip6_nxt = IPPROTO_UDP;
 	ip6hdr->ip6_hops = 128;
 	inet_pton(AF_INET6, local_ipv6_addr_name, &(ip6hdr->ip6_src));
 	inet_pton(AF_INET6, target_ipv6_addr_name, &(ip6hdr->ip6_dst));	
 	
-	struct udphdr *udp = (struct udphdr*)(packet + 40);
+	struct udphdr *udp = (struct udphdr*)(packet + 14 + 40);
 	udp->source = htons(src_port);
 	udp->dest = htons(dst_port);
-	udp->len = htons(len - 40);
+	udp->len = htons(len - 14 - 40);
 	udp->check = 0;
-	uint16_t newchecksum = udpchecksum(packet, packet + 40, len - 40, 6);
-	packet[40 + 6] = (newchecksum >> 8) & 0xFF;
-    packet[40 + 7] = newchecksum & 0xFF;
+	uint16_t newchecksum = udpchecksum(packet + 14, packet + 14 + 40, len - 14 - 40, 6);
+	packet[14 + 40 + 6] = (newchecksum >> 8) & 0xFF;
+    packet[14 + 40 + 7] = newchecksum & 0xFF;
+    
+    memset(packet, 0xff, 6);
+    memset(packet + 6, 0x0, 6);
+    packet[12] = 0x86;
+    packet[13] = 0xdd;
 
-    if (sendto(s_send6, packet, len, 0, (struct sockaddr *)&remote_addr6, sizeof(remote_addr6)) < 0) {
+    //if (sendto(s_send6, packet, len, 0, (struct sockaddr *)&remote_addr6, sizeof(remote_addr6)) < 0) {
+    if (sendto(s_send6, packet, len, 0, (struct sockaddr *)&device, sizeof(device)) < 0) {
         printf("[4over6 CRA]: Failed to send out dhcpv4-over-v6 packet.\n");
         exit(0);
     }
@@ -173,7 +181,7 @@ void sendpacket()
 
 int main(int argc, char **argv)
 {
-//	strcpy(device_name, "eth0");
+	strcpy(device_name, "eth1");
 	int i;
 	for (i = 1; i < argc; ++i) {
 		if (i + 1 < argc && strcmp(argv[i], "-n") == 0) {
@@ -182,9 +190,9 @@ int main(int argc, char **argv)
 		} else if (i + 1 < argc && strcmp(argv[i], "-l") == 0) {
 			++i;
 			sscanf(argv[i], "%d", &len);
-/*		} else if (i + 1 < argc && strcmp(argv[i], "-i") == 0) {
+		} else if (i + 1 < argc && strcmp(argv[i], "-i") == 0) {
 			++i;
-			strcpy(device_name, argv[i]);*/
+			strcpy(device_name, argv[i]);
 		} else if (i + 1 < argc) {
 			strcpy(local_ipv6_addr_name, argv[i++]);
 			strcpy(target_ipv4_addr_name, argv[i]);
@@ -200,6 +208,12 @@ int main(int argc, char **argv)
 		return 0;
 	}
 	sprintf(target_ipv6_addr_name, "2001:da8:200:900e:0:5efe:%s", target_ipv4_addr_name);
+	
+	if ((device.sll_ifindex = if_nametoindex(device_name)) == 0) {
+		fprintf(stderr, "Failed to resolve the index of %s.\n", device_name);
+		exit(1);
+	}
+	
 	printf("count=%d\n", count);
 	init_socket();
 	for (i = 0; i < count || count <= 0; ++i) {
